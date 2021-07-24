@@ -1,10 +1,10 @@
-
 mod conjugation;
 mod dictionary;
 use conjugation::retrieve_conjugation;
 use dictionary::retrieve_translation;
 
-#[macro_use] extern crate rocket;
+#[macro_use]
+extern crate rocket;
 
 #[get("/conjugate/<verb>")]
 async fn conjugate(verb: &str) -> String {

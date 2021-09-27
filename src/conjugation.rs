@@ -3,42 +3,25 @@ use serde::{Deserialize, Serialize};
 use simple_error::bail;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct ConjBase {
-    pub pronoun: String,
-    pub conj: String,
+struct ConjTense {
+    pub header: String,
+    pub conj: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct ConjVerb {
-    first_singular: ConjBase,
-    second_singular: ConjBase,
-    third_singular: ConjBase,
-    first_plural: ConjBase,
-    second_plural: ConjBase,
-    third_plural: ConjBase,
-}
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct EntireConj {
-    present: ConjVerb,
-    present_perfect: ConjVerb,
-    simple_past: ConjVerb,
-    past_perfect: ConjVerb,
-    future: ConjVerb,
-    future_perfect: ConjVerb,
-    conditional: ConjVerb,
-    past_conditional: ConjVerb,
+    pub pronouns: Vec<String>,
+    pub entire_conj: Vec<GroupConj>,
 }
 
-fn unpack_verb_conj(vec_conj: Vec<ConjBase>) -> ConjVerb {
-    ConjVerb {
-        first_singular: vec_conj[0].clone(),
-        second_singular: vec_conj[1].clone(),
-        third_singular: vec_conj[2].clone(),
-        first_plural: vec_conj[3].clone(),
-        second_plural: vec_conj[4].clone(),
-        third_plural: vec_conj[5].clone(),
-    }
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct GroupConj {
+    pub group_name: String,
+    pub group_conj: Vec<ConjTense>,
 }
+
+
+
 
 pub async fn retrieve_conjugation(verb: &str) -> Result<String, Box<dyn std::error::Error>> {
     let base_url = "https://en.bab.la/conjugation/dutch/".to_owned();
@@ -46,34 +29,84 @@ pub async fn retrieve_conjugation(verb: &str) -> Result<String, Box<dyn std::err
     let resp = reqwest::get(url).await?.text().await?;
     // parses string of HTML as a document
     let fragment = Html::parse_document(&resp);
-    // parses based on a CSS selector
-    let stories = Selector::parse("div.conj-item").unwrap();
 
-    let mut v: Vec<ConjBase> = Vec::new();
+    // retrieve values by parsing the document using CSS selectors
+    let repeated_pronouns = retrieve_item(&fragment, "div.conj-person").unwrap();
+    let all_conjugated_forms = retrieve_item(&fragment, "div.conj-result").unwrap();
+    let headers = retrieve_item(&fragment, "h3.conj-tense-block-header").unwrap();
+    let groups = retrieve_item(&fragment, "div.conj-block h3").unwrap();
+
+    // package all the retrieved values into a struct
+    let conj_tense = unpack_conj(&all_conjugated_forms, &headers);
+    let pronouns = unpack_pronouns(&repeated_pronouns);
+    let conj_by_groups = create_conj_groups(&groups, &conj_tense);
+
+    // construct the final struct
+    let entire_conj = EntireConj {
+        entire_conj: conj_by_groups,
+        pronouns: pronouns,
+    };
+
+
+    //TODO cast error instead of unwrap here
+    // convert the struct to a JSON string
+    Ok(serde_json::to_string(&entire_conj).unwrap())
+}
+
+fn retrieve_item(fragment: &Html, selector: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+
+    let result = Selector::parse(selector).unwrap();
+    let mut v: Vec<String> = Vec::new();
+
     // iterate over elements matching our selector
-    for story in fragment.select(&stories) {
+    for element in fragment.select(&result) {
         // grab the headline text and place into a vector
-        let story_txt = story.text().collect::<Vec<_>>();
-        if !story_txt[1].contains("\n") {
-            v.push(ConjBase {
-                pronoun: String::from(story_txt[1]),
-                conj: String::from(story_txt[3]),
-            })
+        let element_txt = element.text().collect::<Vec<_>>();
+        if element_txt.len() > 0 {
+            v.push(element_txt[0].to_string())
         }
     }
     if v.len() == 0 {
-        bail!("No conjugation found for: {}", verb)
+        bail!("No match found for selector: {}", selector)
     }
-    let entire_conj = EntireConj {
-        present: unpack_verb_conj(v[0..6].to_vec()),
-        present_perfect: unpack_verb_conj(v[6..12].to_vec()),
-        simple_past: unpack_verb_conj(v[12..18].to_vec()),
-        past_perfect: unpack_verb_conj(v[18..24].to_vec()),
-        future: unpack_verb_conj(v[24..30].to_vec()),
-        future_perfect: unpack_verb_conj(v[30..36].to_vec()),
-        conditional: unpack_verb_conj(v[36..42].to_vec()),
-        past_conditional: unpack_verb_conj(v[42..48].to_vec()),
-    };
-    //TODO cast error instead of unwrap here
-    Ok(serde_json::to_string(&entire_conj).unwrap())
+    Ok(v)
+}
+
+fn unpack_conj(conjs: &Vec<String>, headers: &Vec<String>) -> Vec<ConjTense> {
+    let mut v: Vec<ConjTense> = Vec::new();
+    let conj_param = vec![6,6,6,6,6,6,6,6,2,1,1,0];
+    let mut bottom = 0;
+    let mut top = conj_param[0];
+    for i in 0..headers.len() {
+        let ct = ConjTense {
+            header: headers[i].clone(),
+            conj: conjs[bottom..top].to_vec(),
+        };
+        bottom = top;
+        top += conj_param[i+1];
+        v.push(ct)
+    }
+    v
+}
+
+fn unpack_pronouns(pronouns: &Vec<String>) -> Vec<String> {
+    pronouns[0..6].to_vec()
+}
+
+fn create_conj_groups(groups: &Vec<String>, conj_tense: &Vec<ConjTense>) -> Vec<GroupConj> {
+    let mut v: Vec<GroupConj> = Vec::new();
+    let group_struct= vec![6,2,1,2,0];
+    let mut bottom = 0;
+    let mut top = group_struct[0];
+    for i in 0..groups.len() {
+        let ct = GroupConj{
+            group_name: groups[i].clone(),
+            group_conj: conj_tense[bottom..top].to_vec(),
+        };
+        bottom = top;
+        top += group_struct[i+1];
+        v.push(ct)
+    }
+    v
+
 }

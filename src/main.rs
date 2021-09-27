@@ -45,5 +45,6 @@ async fn translate(word: &str) -> String {
 
 #[launch]
 fn rocket() -> _ {
-    rocket::build().attach(CORS).mount("/", routes![conjugate, translate])
+    rocket::build().attach(CORS).mount("/dutchmate-dictionary/", routes![conjugate])
+                                .mount("/dutchmate-dictionary/nl-to-en/", routes![translate])
 }
